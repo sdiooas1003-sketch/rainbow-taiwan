@@ -96,7 +96,8 @@
       <button id="copy" class="secondary">複製文字</button>
     </div>
     <div class="actions">
-      <button id="share" style="background:#06c755">分享至 LINE</button>
+      <button id="shareImg" style="background:#06c755">① 分享圖片</button>
+      <button id="shareText" style="background:#06c755">② 分享文字</button>
     </div>
   </section>
 
@@ -197,7 +198,7 @@ const FIELDS = ['source','name','orderNo','list','machineOff','cardOff','conditi
 const LABELS = { source:'來源', name:'姓名', orderNo:'單號', list:'名單', machineOff:'下機', cardOff:'下卡', condition:'狀況', note:'備註', recruit:'招募' };
 let records = [];
 try { records = JSON.parse(localStorage.getItem('records') || '[]'); } catch (e) {}
-let lastFile = null, shareStep = 1;
+let lastFile = null;
 
 function setStatus(msg, cls) { const s = $('#status'); s.textContent = msg; s.className = cls || ''; }
 function persist() { localStorage.setItem('records', JSON.stringify(records)); }
@@ -205,7 +206,7 @@ function getForm() { const o = {}; FIELDS.forEach(f => o[f] = $('#' + f).value.t
 function clearForm() {
   FIELDS.forEach(f => { $('#' + f).value = f === 'condition' ? '正常' : f === 'recruit' ? '有興趣' : ''; });
   $('#preview').classList.add('hidden'); $('#nameCropBox').classList.add('hidden'); setStatus('');
-  lastFile = null; shareStep = 1; updateShareBtn();
+  lastFile = null;
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
 
@@ -303,7 +304,7 @@ $('#file').addEventListener('change', async e => {
     setStatus('處理圖片中…', 'busy');
     $('#nameCropBox').classList.add('hidden');
     const canvas = await toCanvas(file);
-    lastFile = await canvasToFile(canvas); shareStep = 1; updateShareBtn();
+    lastFile = await canvasToFile(canvas);
     $('#preview').src = canvas.toDataURL('image/jpeg', 0.8); $('#preview').classList.remove('hidden');
     const r = await analyze(canvas);
     $('#source').value = r.source;
@@ -344,28 +345,26 @@ function canvasToFile(c) {
   return new Promise(res => c.toBlob(b => res(new File([b], '表單.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.9));
 }
 
-function updateShareBtn() {
-  $('#share').textContent = shareStep === 2 ? '② 接著分享文字到 LINE' : (lastFile ? '① 分享圖片到 LINE' : '分享文字到 LINE');
-}
-
-$('#share').addEventListener('click', async () => {
-  if (lastFile && shareStep === 1) {
-    if (!navigator.canShare || !navigator.canShare({ files: [lastFile] })) {
-      setStatus('此瀏覽器不支援分享圖片，請改用 Safari。先略過圖片，繼續分享文字', 'err');
-      shareStep = 2; updateShareBtn();
-      return;
-    }
-    try {
-      await navigator.share({ files: [lastFile] });
-      shareStep = 2; updateShareBtn();
-      setStatus('圖片已分享，請再按一次按鈕分享文字', 'ok');
-    } catch (e) {
-      setStatus(e && e.name === 'AbortError' ? '已取消分享圖片' : '分享圖片失敗：' + (e && e.message), e && e.name === 'AbortError' ? 'busy' : 'err');
-    }
+$('#shareImg').addEventListener('click', async () => {
+  if (!lastFile) { setStatus('請先上傳圖片', 'err'); return; }
+  if (!navigator.canShare || !navigator.canShare({ files: [lastFile] })) {
+    setStatus('此瀏覽器不支援分享圖片，請改用 iPhone Safari', 'err');
     return;
   }
+  try {
+    await navigator.share({ files: [lastFile] });
+    setStatus('圖片已分享，接著按「② 分享文字」', 'ok');
+  } catch (e) {
+    if (!e || e.name !== 'AbortError') setStatus('分享圖片失敗：' + (e && e.message), 'err');
+  }
+});
+
+$('#shareText').addEventListener('click', async () => {
   const text = reportText(getForm());
-  shareStep = 1; updateShareBtn();
+  if (navigator.share) {
+    try { await navigator.share({ text }); setStatus('文字已分享', 'ok'); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+  }
   location.href = 'https://line.me/R/msg/text/?' + encodeURIComponent(text);
 });
 
