@@ -108,6 +108,9 @@
     <div class="actions">
       <button id="shareBoth" class="secondary">試試：圖片與文字一起分享</button>
     </div>
+    <div class="actions">
+      <button id="reloadBtn" class="hidden" style="background:#d1242f">分享卡住了，按這裡重新載入</button>
+    </div>
   </section>
 
   <section id="tab-list" class="hidden">
@@ -124,7 +127,8 @@
       <div class="row"><label style="width:auto;flex:1">複製單號時去掉開頭的 Z</label><input id="stripZ" type="checkbox"></div>
     </div>
     <p class="note">本 App 完全在手機上辨識，不需要 API Key，也不會把圖片傳到任何伺服器。第一次辨識需下載約十幾 MB 的語言資料，之後會快取。手寫姓名 Tesseract 通常讀不準，所以會在上方顯示姓名區域的截圖，請對照後自行輸入。紀錄只存在這支手機的瀏覽器，清除網站資料或換手機會消失，請定期匯出 CSV。</p>
-    <p class="note">版本：2026-10-25 d</p>
+    <div class="actions"><button id="reloadSet" class="secondary">重新載入 App</button></div>
+    <p class="note">版本：2026-10-25 e</p>
   </section>
 </main>
 
@@ -213,7 +217,7 @@ const FIELDS = ['source','name','orderNo','list','machineOff','cardOff','conditi
 const LABELS = { source:'來源', name:'姓名', orderNo:'單號', list:'名單', machineOff:'下機', cardOff:'下卡', condition:'狀況', note:'備註', recruit:'招募' };
 let records = [];
 try { records = JSON.parse(localStorage.getItem('records') || '[]'); } catch (e) {}
-let lastFile = null;
+let lastFile = null, previewUrl = null;
 
 function setStatus(msg, cls) { const s = $('#status'); s.textContent = msg; s.className = cls || ''; }
 function persist() { localStorage.setItem('records', JSON.stringify(records)); }
@@ -292,6 +296,10 @@ function loadTesseract() {
 window.addEventListener('load', () => { loadTesseract().catch(() => {}); });
 
 let workerPromise = null;
+async function releaseWorker() {
+  const p = workerPromise; workerPromise = null;
+  if (p) { try { const w = await p; await w.terminate(); } catch (e) {} }
+}
 async function getWorker() {
   setStatus('載入辨識引擎…', 'busy');
   await loadTesseract();
@@ -335,183 +343,4 @@ async function analyze(canvas) {
       box.getContext('2d').drawImage(canvas, R.x, R.y, R.w, R.h, 0, 0, box.width, box.height);
       out.cropped = true;
       try {
-        await worker.setParameters({ tessedit_pageseg_mode: '7' });
-        const nr = await worker.recognize(toGray(canvas, R.x, R.y, R.w, R.h));
-        const han = (String(nr.data.text || '').match(/[\u4e00-\u9fff]/g) || []).join('');
-        if (han.length >= 2 && han.length <= 4) out.name = han;
-      } catch (e) {}
-    }
-  }
-  return out;
-}
-
-$('#file').addEventListener('change', async e => {
-  const file = e.target.files[0];
-  if (!file) return;
-  try {
-    setStatus('已選取：' + (file.name || '照片') + '（' + Math.round(file.size / 1024) + ' KB，' + (file.type || '未知格式') + '），處理中…', 'busy');
-    $('#nameCropBox').classList.add('hidden');
-    try { $('#preview').src = URL.createObjectURL(file); $('#preview').classList.remove('hidden'); } catch (e) {}
-    let canvas;
-    try {
-      canvas = await toCanvas(file);
-      lastFile = await canvasToFile(canvas);
-      $('#preview').src = canvas.toDataURL('image/jpeg', 0.8); $('#preview').classList.remove('hidden');
-    } catch (err) {
-      lastFile = null;
-      setStatus('圖片讀取失敗：' + (err && err.message ? err.message : err) + '（請改選 JPG 或 PNG，或改用 iPhone Safari）', 'err');
-      return;
-    }
-    let r;
-    try { r = await analyze(canvas); }
-    catch (err) {
-      setStatus('圖片已載入，但自動辨識失敗（' + (err && err.message ? err.message : err) + '），請手動輸入欄位，仍可分享圖片', 'err');
-      return;
-    }
-    $('#source').value = r.source;
-    $('#name').value = r.name;
-    $('#orderNo').value = r.orderNo;
-    if (r.cropped) $('#nameCropBox').classList.remove('hidden');
-    const miss = [];
-    if (!r.orderNo) miss.push('單號');
-    if (!r.source) miss.push('來源');
-    if (!r.name) miss.push('姓名');
-    setStatus(miss.length ? '辨識完成，請手動確認：' + miss.join('、') : '辨識完成，請確認內容（手寫姓名請對照截圖）', miss.length ? 'err' : 'ok');
-  } catch (err) {
-    setStatus(err.message || '辨識失敗', 'err');
-  } finally {
-    e.target.value = '';
-  }
-});
-
-$('#save').addEventListener('click', () => {
-  const f = getForm();
-  if (!f.name && !f.orderNo) { setStatus('請至少填寫姓名或單號', 'err'); return; }
-  records.unshift({ ...f, savedAt: new Date().toISOString() });
-  persist(); clearForm(); setStatus('已儲存', 'ok'); renderList();
-});
-
-function reportText(f) {
-  let no = f.orderNo;
-  if ($('#stripZ').checked) no = no.replace(/^[A-Za-z]/, '');
-  const cond = f.note ? f.condition + '，' + f.note : f.condition;
-  return ['來源：' + f.source, '姓名：' + f.name, '單號：' + no, '名單：' + f.list, '下機：' + f.machineOff, '下卡：' + f.cardOff, '狀況：' + cond, '招募：' + f.recruit].join('\n');
-}
-
-$('#copy').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText(reportText(getForm())); setStatus('已複製，可直接貼到 LINE', 'ok'); } catch (e) { setStatus('無法複製', 'err'); }
-});
-
-function canvasToFile(c) {
-  return new Promise((res, rej) => c.toBlob(
-    b => b ? res(new File([b], '表單.jpg', { type: 'image/jpeg' })) : rej(new Error('無法產生圖片檔')),
-    'image/jpeg', 0.9));
-}
-
-function openLineText(text) {
-  try { navigator.clipboard.writeText(text).catch(() => {}); } catch (e) {}
-  location.href = 'https://line.me/R/msg/text/?' + encodeURIComponent(text);
-}
-
-function showTextStep(msg) {
-  const b = $('#shareText');
-  b.classList.remove('hidden');
-  setStatus(msg, 'ok');
-  try { b.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
-}
-
-$('#shareAll').addEventListener('click', async () => {
-  const text = reportText(getForm());
-  $('#shareText').classList.add('hidden');
-
-  if (!lastFile) { openLineText(text); return; }
-
-  if (!navigator.canShare || !navigator.canShare({ files: [lastFile] })) {
-    showTextStep('此瀏覽器無法分享圖片，請改用 Safari。先傳文字請按下方綠色按鈕');
-    return;
-  }
-
-  const sharing = navigator.share({ files: [lastFile] });
-  try { navigator.clipboard.writeText(text).catch(() => {}); } catch (e) {}
-  try {
-    await sharing;
-  } catch (e) {
-    if (e && e.name === 'AbortError') { setStatus('已取消分享', 'busy'); return; }
-    setStatus('分享圖片失敗：' + (e && e.message), 'err');
-    return;
-  }
-  showTextStep('① 圖片已送出。請再按下方綠色「② 傳送文字到 LINE」，選同一個聊天室');
-});
-
-$('#shareText').addEventListener('click', () => {
-  openLineText(reportText(getForm()));
-});
-
-$('#shareBoth').addEventListener('click', async () => {
-  const text = reportText(getForm());
-  if (!lastFile || !navigator.canShare || !navigator.canShare({ files: [lastFile], text })) {
-    setStatus('此裝置不支援圖片與文字一起分享，請改用上方綠色按鈕', 'err');
-    return;
-  }
-  const sharing = navigator.share({ files: [lastFile], text });
-  try { navigator.clipboard.writeText(text).catch(() => {}); } catch (e) {}
-  try {
-    await sharing;
-    setStatus('已分享。請到 LINE 確認有沒有收到文字；若只有圖片，請改用上方綠色按鈕（文字已複製，也可長按貼上）', 'ok');
-  } catch (e) {
-    if (!e || e.name !== 'AbortError') setStatus('分享失敗：' + (e && e.message), 'err');
-  }
-});
-
-function renderList() {
-  const box = $('#records');
-  if (!records.length) { box.innerHTML = '<div class="empty">還沒有紀錄</div>'; return; }
-  box.innerHTML = records.map((r, i) => `
-    <div class="rec">
-      <div class="t"><span>${esc(r.name || '（無姓名）')}</span><span>${esc(r.orderNo)}</span></div>
-      <div class="m">${esc(r.source)} · ${esc(r.condition)} · ${esc(r.recruit)} · ${new Date(r.savedAt).toLocaleString('zh-TW')}</div>
-      <div class="m">名單：${esc(r.list)} 下機：${esc(r.machineOff)} 下卡：${esc(r.cardOff)}${r.note ? ' 備註：' + esc(r.note) : ''}</div>
-      <button class="d" data-del="${i}">刪除</button>
-    </div>`).join('');
-}
-
-$('#records').addEventListener('click', e => {
-  const i = e.target.dataset.del;
-  if (i === undefined) return;
-  if (confirm('確定刪除這筆紀錄？')) { records.splice(+i, 1); persist(); renderList(); }
-});
-
-$('#csv').addEventListener('click', () => {
-  const head = [...FIELDS.map(k => LABELS[k]), '儲存時間'];
-  const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-  const rows = records.map(r => [...FIELDS.map(k => r[k]), r.savedAt].map(q).join(','));
-  const blob = new Blob(['\uFEFF' + [head.map(q).join(','), ...rows].join('\n')], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = 'records.csv'; a.click();
-});
-
-$('#stripZ').checked = localStorage.getItem('stripZ') !== '0';
-$('#stripZ').addEventListener('change', () => localStorage.setItem('stripZ', $('#stripZ').checked ? '1' : '0'));
-
-document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
-  ['new', 'list', 'set'].forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
-  $('#title').textContent = { new: '表單擷取', list: '紀錄', set: '設定' }[b.dataset.tab];
-}));
-
-(function makeIcon() {
-  try {
-    const c = document.createElement('canvas'); c.width = c.height = 180;
-    const g = c.getContext('2d');
-    g.fillStyle = '#1f6feb'; g.fillRect(0, 0, 180, 180);
-    g.fillStyle = '#fff'; g.fillRect(48, 36, 84, 108);
-    g.fillStyle = '#1f6feb';
-    [62, 87, 112].forEach(y => g.fillRect(64, y, 52, 7));
-    $('#touchIcon').href = c.toDataURL('image/png');
-  } catch (e) {}
-})();
-
-renderList();
-</script>
-</body>
-</html>
+        await worker.setParameters({
