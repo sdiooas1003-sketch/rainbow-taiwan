@@ -52,10 +52,6 @@
 </head>
 <body>
 <header id="title">表單擷取</header>
-<div id="lineWarn" class="hidden" style="background:#fff3cd;color:#664d03;padding:10px 16px;font-size:14px;line-height:1.5">
-  目前是在 LINE 內建瀏覽器開啟，選照片和分享功能可能無法使用。請點畫面角落的選單（⋯ 或分享圖示），選「在 Safari 中開啟」。
-  <br><a id="lineOpen" href="#" style="color:#0a58ca;font-weight:600">或點這裡改用瀏覽器開啟</a>
-</div>
 
 <main>
   <section id="tab-new">
@@ -89,10 +85,10 @@
     <h3>選項</h3>
     <div class="card">
       <div class="row"><label>狀況</label>
-        <select id="condition"><option>正常</option><option>公獨</option><option>婆獨</option><option>單親</option><option>單身</option><option>家人代看</option></select></div>
+        <select id="condition"><option>正常</option><option>公獨</option><option>婆獨</option></select></div>
       <div class="row"><label>備註</label><input id="note" placeholder="輸入備註"></div>
       <div class="row"><label>招募</label>
-        <select id="recruit"><option>沒興趣</option><option>有興趣</option></select></div>
+        <select id="recruit"><option>有興趣</option><option>沒興趣</option></select></div>
     </div>
 
     <div class="actions">
@@ -100,16 +96,8 @@
       <button id="copy" class="secondary">複製文字</button>
     </div>
     <div class="actions">
-      <button id="shareAll" style="background:#06c755">分享至 LINE（先圖片，再文字）</button>
-    </div>
-    <div class="actions">
-      <button id="shareText" class="hidden" style="background:#06c755">② 傳送文字到 LINE</button>
-    </div>
-    <div class="actions">
-      <button id="shareBoth" class="secondary">試試：圖片與文字一起分享</button>
-    </div>
-    <div class="actions">
-      <button id="reloadBtn" class="hidden" style="background:#d1242f">分享卡住了，按這裡重新載入</button>
+      <button id="shareImg" style="background:#06c755">① 分享圖片</button>
+      <button id="shareText" style="background:#06c755">② 分享文字</button>
     </div>
   </section>
 
@@ -127,8 +115,6 @@
       <div class="row"><label style="width:auto;flex:1">複製單號時去掉開頭的 Z</label><input id="stripZ" type="checkbox"></div>
     </div>
     <p class="note">本 App 完全在手機上辨識，不需要 API Key，也不會把圖片傳到任何伺服器。第一次辨識需下載約十幾 MB 的語言資料，之後會快取。手寫姓名 Tesseract 通常讀不準，所以會在上方顯示姓名區域的截圖，請對照後自行輸入。紀錄只存在這支手機的瀏覽器，清除網站資料或換手機會消失，請定期匯出 CSV。</p>
-    <div class="actions"><button id="reloadSet" class="secondary">重新載入 App</button></div>
-    <p class="note">版本：2026-10-25 e</p>
   </section>
 </main>
 
@@ -138,6 +124,7 @@
   <button data-tab="set">設定</button>
 </nav>
 
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script>
 const SOURCES = ['REF', 'INS', '公司未購', '私人', '其他'];
 const RATIOS = [0, 1, 5.89, 7.63, 8.68];
@@ -207,49 +194,28 @@ function nameRegion(A, W, H) {
 //</pure>
 
 const $ = s => document.querySelector(s);
-window.addEventListener('error', ev => { try { $('#status').textContent = '程式錯誤：' + ev.message; $('#status').className = 'err'; } catch (e) {} });
-window.addEventListener('unhandledrejection', ev => { try { $('#status').textContent = '程式錯誤：' + (ev.reason && ev.reason.message ? ev.reason.message : ev.reason); $('#status').className = 'err'; } catch (e) {} });
-if (/\bLine\//i.test(navigator.userAgent)) {
-  $('#lineWarn').classList.remove('hidden');
-  $('#lineOpen').href = location.origin + location.pathname + '?openExternalBrowser=1';
-}
 const FIELDS = ['source','name','orderNo','list','machineOff','cardOff','condition','note','recruit'];
 const LABELS = { source:'來源', name:'姓名', orderNo:'單號', list:'名單', machineOff:'下機', cardOff:'下卡', condition:'狀況', note:'備註', recruit:'招募' };
 let records = [];
 try { records = JSON.parse(localStorage.getItem('records') || '[]'); } catch (e) {}
-let lastFile = null, previewUrl = null;
+let lastFile = null;
 
 function setStatus(msg, cls) { const s = $('#status'); s.textContent = msg; s.className = cls || ''; }
 function persist() { localStorage.setItem('records', JSON.stringify(records)); }
 function getForm() { const o = {}; FIELDS.forEach(f => o[f] = $('#' + f).value.trim()); return o; }
 function clearForm() {
-  FIELDS.forEach(f => { $('#' + f).value = f === 'condition' ? '正常' : f === 'recruit' ? '沒興趣' : ''; });
+  FIELDS.forEach(f => { $('#' + f).value = f === 'condition' ? '正常' : f === 'recruit' ? '有興趣' : ''; });
   $('#preview').classList.add('hidden'); $('#nameCropBox').classList.add('hidden'); setStatus('');
-  lastFile = null; $('#shareText').classList.add('hidden');
+  lastFile = null;
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
 
 async function toCanvas(file, max = 1600) {
-  let src = null;
-  try { src = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
-  catch (e1) { try { src = await createImageBitmap(file); } catch (e2) { src = null; } }
-  if (!src) {
-    const url = URL.createObjectURL(file);
-    try {
-      src = await new Promise((res, rej) => {
-        const im = new Image();
-        im.onload = () => res(im);
-        im.onerror = () => rej(new Error('無法讀取這張圖片的格式'));
-        im.src = url;
-      });
-    } finally { setTimeout(() => URL.revokeObjectURL(url), 10000); }
-  }
-  const w = src.width || src.naturalWidth, h = src.height || src.naturalHeight;
-  if (!w || !h) throw new Error('圖片尺寸異常');
-  const s = Math.min(1, max / Math.max(w, h));
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
   const c = document.createElement('canvas');
-  c.width = Math.round(w * s); c.height = Math.round(h * s);
-  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
   return c;
 }
 
@@ -278,31 +244,9 @@ function toGray(src, x = 0, y = 0, w = src.width, h = src.height) {
   return out;
 }
 
-let tessLoading = null;
-function loadTesseract() {
-  if (window.Tesseract) return Promise.resolve();
-  if (!tessLoading) {
-    tessLoading = new Promise((res, rej) => {
-      const s = document.createElement('script');
-      const t = setTimeout(() => rej(new Error('辨識引擎載入逾時，請檢查網路')), 25000);
-      s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
-      s.onload = () => { clearTimeout(t); res(); };
-      s.onerror = () => { clearTimeout(t); rej(new Error('無法載入辨識引擎，請確認網路連線')); };
-      document.head.appendChild(s);
-    }).catch(e => { tessLoading = null; throw e; });
-  }
-  return tessLoading;
-}
-window.addEventListener('load', () => { loadTesseract().catch(() => {}); });
-
 let workerPromise = null;
-async function releaseWorker() {
-  const p = workerPromise; workerPromise = null;
-  if (p) { try { const w = await p; await w.terminate(); } catch (e) {} }
-}
-async function getWorker() {
-  setStatus('載入辨識引擎…', 'busy');
-  await loadTesseract();
+function getWorker() {
+  if (typeof Tesseract === 'undefined') throw new Error('無法載入辨識引擎，請確認網路連線');
   if (!workerPromise) {
     workerPromise = Tesseract.createWorker(['chi_tra', 'eng'], 1, {
       logger: m => {
@@ -343,4 +287,136 @@ async function analyze(canvas) {
       box.getContext('2d').drawImage(canvas, R.x, R.y, R.w, R.h, 0, 0, box.width, box.height);
       out.cropped = true;
       try {
-        await worker.setParameters({
+        await worker.setParameters({ tessedit_pageseg_mode: '7' });
+        const nr = await worker.recognize(toGray(canvas, R.x, R.y, R.w, R.h));
+        const han = (String(nr.data.text || '').match(/[\u4e00-\u9fff]/g) || []).join('');
+        if (han.length >= 2 && han.length <= 4) out.name = han;
+      } catch (e) {}
+    }
+  }
+  return out;
+}
+
+$('#file').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    setStatus('處理圖片中…', 'busy');
+    $('#nameCropBox').classList.add('hidden');
+    const canvas = await toCanvas(file);
+    lastFile = await canvasToFile(canvas);
+    $('#preview').src = canvas.toDataURL('image/jpeg', 0.8); $('#preview').classList.remove('hidden');
+    const r = await analyze(canvas);
+    $('#source').value = r.source;
+    $('#name').value = r.name;
+    $('#orderNo').value = r.orderNo;
+    if (r.cropped) $('#nameCropBox').classList.remove('hidden');
+    const miss = [];
+    if (!r.orderNo) miss.push('單號');
+    if (!r.source) miss.push('來源');
+    if (!r.name) miss.push('姓名');
+    setStatus(miss.length ? '辨識完成，請手動確認：' + miss.join('、') : '辨識完成，請確認內容（手寫姓名請對照截圖）', miss.length ? 'err' : 'ok');
+  } catch (err) {
+    setStatus(err.message || '辨識失敗', 'err');
+  } finally {
+    e.target.value = '';
+  }
+});
+
+$('#save').addEventListener('click', () => {
+  const f = getForm();
+  if (!f.name && !f.orderNo) { setStatus('請至少填寫姓名或單號', 'err'); return; }
+  records.unshift({ ...f, savedAt: new Date().toISOString() });
+  persist(); clearForm(); setStatus('已儲存', 'ok'); renderList();
+});
+
+function reportText(f) {
+  let no = f.orderNo;
+  if ($('#stripZ').checked) no = no.replace(/^[A-Za-z]/, '');
+  const cond = f.note ? f.condition + '，' + f.note : f.condition;
+  return ['來源：' + f.source, '姓名：' + f.name, '單號：' + no, '名單：' + f.list, '下機：' + f.machineOff, '下卡：' + f.cardOff, '狀況：' + cond, '招募：' + f.recruit].join('\n');
+}
+
+$('#copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(reportText(getForm())); setStatus('已複製，可直接貼到 LINE', 'ok'); } catch (e) { setStatus('無法複製', 'err'); }
+});
+
+function canvasToFile(c) {
+  return new Promise(res => c.toBlob(b => res(new File([b], '表單.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.9));
+}
+
+$('#shareImg').addEventListener('click', async () => {
+  if (!lastFile) { setStatus('請先上傳圖片', 'err'); return; }
+  if (!navigator.canShare || !navigator.canShare({ files: [lastFile] })) {
+    setStatus('此瀏覽器不支援分享圖片，請改用 iPhone Safari', 'err');
+    return;
+  }
+  try {
+    await navigator.share({ files: [lastFile] });
+    setStatus('圖片已分享，接著按「② 分享文字」', 'ok');
+  } catch (e) {
+    if (!e || e.name !== 'AbortError') setStatus('分享圖片失敗：' + (e && e.message), 'err');
+  }
+});
+
+$('#shareText').addEventListener('click', async () => {
+  const text = reportText(getForm());
+  if (navigator.share) {
+    try { await navigator.share({ text }); setStatus('文字已分享', 'ok'); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  location.href = 'https://line.me/R/msg/text/?' + encodeURIComponent(text);
+});
+
+function renderList() {
+  const box = $('#records');
+  if (!records.length) { box.innerHTML = '<div class="empty">還沒有紀錄</div>'; return; }
+  box.innerHTML = records.map((r, i) => `
+    <div class="rec">
+      <div class="t"><span>${esc(r.name || '（無姓名）')}</span><span>${esc(r.orderNo)}</span></div>
+      <div class="m">${esc(r.source)} · ${esc(r.condition)} · ${esc(r.recruit)} · ${new Date(r.savedAt).toLocaleString('zh-TW')}</div>
+      <div class="m">名單：${esc(r.list)} 下機：${esc(r.machineOff)} 下卡：${esc(r.cardOff)}${r.note ? ' 備註：' + esc(r.note) : ''}</div>
+      <button class="d" data-del="${i}">刪除</button>
+    </div>`).join('');
+}
+
+$('#records').addEventListener('click', e => {
+  const i = e.target.dataset.del;
+  if (i === undefined) return;
+  if (confirm('確定刪除這筆紀錄？')) { records.splice(+i, 1); persist(); renderList(); }
+});
+
+$('#csv').addEventListener('click', () => {
+  const head = [...FIELDS.map(k => LABELS[k]), '儲存時間'];
+  const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const rows = records.map(r => [...FIELDS.map(k => r[k]), r.savedAt].map(q).join(','));
+  const blob = new Blob(['\uFEFF' + [head.map(q).join(','), ...rows].join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'records.csv'; a.click();
+});
+
+$('#stripZ').checked = localStorage.getItem('stripZ') !== '0';
+$('#stripZ').addEventListener('change', () => localStorage.setItem('stripZ', $('#stripZ').checked ? '1' : '0'));
+
+document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  ['new', 'list', 'set'].forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
+  $('#title').textContent = { new: '表單擷取', list: '紀錄', set: '設定' }[b.dataset.tab];
+}));
+
+(function makeIcon() {
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = 180;
+    const g = c.getContext('2d');
+    g.fillStyle = '#1f6feb'; g.fillRect(0, 0, 180, 180);
+    g.fillStyle = '#fff'; g.fillRect(48, 36, 84, 108);
+    g.fillStyle = '#1f6feb';
+    [62, 87, 112].forEach(y => g.fillRect(64, y, 52, 7));
+    $('#touchIcon').href = c.toDataURL('image/png');
+  } catch (e) {}
+})();
+
+renderList();
+</script>
+</body>
+</html>
