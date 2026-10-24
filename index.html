@@ -117,6 +117,7 @@
       <div class="row"><label style="width:auto;flex:1">複製單號時去掉開頭的 Z</label><input id="stripZ" type="checkbox"></div>
     </div>
     <p class="note">本 App 完全在手機上辨識，不需要 API Key，也不會把圖片傳到任何伺服器。第一次辨識需下載約十幾 MB 的語言資料，之後會快取。手寫姓名 Tesseract 通常讀不準，所以會在上方顯示姓名區域的截圖，請對照後自行輸入。紀錄只存在這支手機的瀏覽器，清除網站資料或換手機會消失，請定期匯出 CSV。</p>
+    <p class="note">版本：2026-10-25 b</p>
   </section>
 </main>
 
@@ -126,7 +127,6 @@
   <button data-tab="set">設定</button>
 </nav>
 
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script>
 const SOURCES = ['REF', 'INS', '公司未購', '私人', '其他'];
 const RATIOS = [0, 1, 5.89, 7.63, 8.68];
@@ -145,4 +145,8 @@ function findOrderNo(words, W) {
   if (!best) return '';
   let letter = best.m[1];
   if (!letter) {
-    const h = best.w.bbox.y1 -
+    const h = best.w.bbox.y1 - best.w.bbox.y0;
+    const l = words.find(v => /^[A-Za-z]$/.test(clean(v.text)) &&
+      v.bbox.x1 <= best.w.bbox.x0 + 5 && best.w.bbox.x0 - v.bbox.x1 < 2 * h &&
+      Math.abs(v.bbox.y0 - best.w.bbox.y0) < h);
+    letter = l ? clean(l.text) : 'Z';
