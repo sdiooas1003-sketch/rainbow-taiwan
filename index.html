@@ -100,10 +100,13 @@
       <button id="copy" class="secondary">複製文字</button>
     </div>
     <div class="actions">
-      <button id="shareAll" style="background:#06c755">分享至 LINE（圖片＋文字）</button>
+      <button id="shareAll" style="background:#06c755">分享至 LINE（先圖片，再文字）</button>
     </div>
     <div class="actions">
-      <button id="shareText" class="hidden" style="background:#06c755">接著分享文字到 LINE</button>
+      <button id="shareText" class="hidden" style="background:#06c755">② 傳送文字到 LINE</button>
+    </div>
+    <div class="actions">
+      <button id="shareBoth" class="secondary">試試：圖片與文字一起分享</button>
     </div>
   </section>
 
@@ -121,7 +124,7 @@
       <div class="row"><label style="width:auto;flex:1">複製單號時去掉開頭的 Z</label><input id="stripZ" type="checkbox"></div>
     </div>
     <p class="note">本 App 完全在手機上辨識，不需要 API Key，也不會把圖片傳到任何伺服器。第一次辨識需下載約十幾 MB 的語言資料，之後會快取。手寫姓名 Tesseract 通常讀不準，所以會在上方顯示姓名區域的截圖，請對照後自行輸入。紀錄只存在這支手機的瀏覽器，清除網站資料或換手機會消失，請定期匯出 CSV。</p>
-    <p class="note">版本：2026-10-25 c</p>
+    <p class="note">版本：2026-10-25 d</p>
   </section>
 </main>
 
@@ -369,139 +372,4 @@ $('#file').addEventListener('change', async e => {
     $('#name').value = r.name;
     $('#orderNo').value = r.orderNo;
     if (r.cropped) $('#nameCropBox').classList.remove('hidden');
-    const miss = [];
-    if (!r.orderNo) miss.push('單號');
-    if (!r.source) miss.push('來源');
-    if (!r.name) miss.push('姓名');
-    setStatus(miss.length ? '辨識完成，請手動確認：' + miss.join('、') : '辨識完成，請確認內容（手寫姓名請對照截圖）', miss.length ? 'err' : 'ok');
-  } catch (err) {
-    setStatus(err.message || '辨識失敗', 'err');
-  } finally {
-    e.target.value = '';
-  }
-});
-
-$('#save').addEventListener('click', () => {
-  const f = getForm();
-  if (!f.name && !f.orderNo) { setStatus('請至少填寫姓名或單號', 'err'); return; }
-  records.unshift({ ...f, savedAt: new Date().toISOString() });
-  persist(); clearForm(); setStatus('已儲存', 'ok'); renderList();
-});
-
-function reportText(f) {
-  let no = f.orderNo;
-  if ($('#stripZ').checked) no = no.replace(/^[A-Za-z]/, '');
-  const cond = f.note ? f.condition + '，' + f.note : f.condition;
-  return ['來源：' + f.source, '姓名：' + f.name, '單號：' + no, '名單：' + f.list, '下機：' + f.machineOff, '下卡：' + f.cardOff, '狀況：' + cond, '招募：' + f.recruit].join('\n');
-}
-
-$('#copy').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText(reportText(getForm())); setStatus('已複製，可直接貼到 LINE', 'ok'); } catch (e) { setStatus('無法複製', 'err'); }
-});
-
-function canvasToFile(c) {
-  return new Promise((res, rej) => c.toBlob(
-    b => b ? res(new File([b], '表單.jpg', { type: 'image/jpeg' })) : rej(new Error('無法產生圖片檔')),
-    'image/jpeg', 0.9));
-}
-
-async function shareTextOnly(text) {
-  if (navigator.share) {
-    try { await navigator.share({ text }); return true; }
-    catch (e) { if (e && e.name === 'AbortError') return 'cancel'; throw e; }
-  }
-  location.href = 'https://line.me/R/msg/text/?' + encodeURIComponent(text);
-  return true;
-}
-
-$('#shareAll').addEventListener('click', async () => {
-  const text = reportText(getForm());
-  $('#shareText').classList.add('hidden');
-
-  if (lastFile && navigator.canShare && navigator.canShare({ files: [lastFile] })) {
-    const sharing = navigator.share({ files: [lastFile] });
-    try { navigator.clipboard.writeText(text).catch(() => {}); } catch (e) {}
-    try {
-      await sharing;
-    } catch (e) {
-      if (e && e.name === 'AbortError') { setStatus('已取消分享', 'busy'); return; }
-      setStatus('分享圖片失敗：' + (e && e.message), 'err');
-      return;
-    }
-  } else if (lastFile) {
-    setStatus('此瀏覽器不支援分享圖片，改為只分享文字', 'err');
-  }
-
-  try {
-    const r = await shareTextOnly(text);
-    if (r === 'cancel') { setStatus('已取消分享文字', 'busy'); return; }
-    setStatus('已分享圖片與文字', 'ok');
-  } catch (e) {
-    $('#shareText').classList.remove('hidden');
-    setStatus('圖片已送出。瀏覽器要求再點一次才能分享文字（文字也已複製，可直接貼上）', 'ok');
-  }
-});
-
-$('#shareText').addEventListener('click', async () => {
-  try {
-    const r = await shareTextOnly(reportText(getForm()));
-    if (r === 'cancel') return;
-    $('#shareText').classList.add('hidden');
-    setStatus('文字已分享', 'ok');
-  } catch (e) {
-    setStatus('分享文字失敗：' + (e && e.message), 'err');
-  }
-});
-
-function renderList() {
-  const box = $('#records');
-  if (!records.length) { box.innerHTML = '<div class="empty">還沒有紀錄</div>'; return; }
-  box.innerHTML = records.map((r, i) => `
-    <div class="rec">
-      <div class="t"><span>${esc(r.name || '（無姓名）')}</span><span>${esc(r.orderNo)}</span></div>
-      <div class="m">${esc(r.source)} · ${esc(r.condition)} · ${esc(r.recruit)} · ${new Date(r.savedAt).toLocaleString('zh-TW')}</div>
-      <div class="m">名單：${esc(r.list)} 下機：${esc(r.machineOff)} 下卡：${esc(r.cardOff)}${r.note ? ' 備註：' + esc(r.note) : ''}</div>
-      <button class="d" data-del="${i}">刪除</button>
-    </div>`).join('');
-}
-
-$('#records').addEventListener('click', e => {
-  const i = e.target.dataset.del;
-  if (i === undefined) return;
-  if (confirm('確定刪除這筆紀錄？')) { records.splice(+i, 1); persist(); renderList(); }
-});
-
-$('#csv').addEventListener('click', () => {
-  const head = [...FIELDS.map(k => LABELS[k]), '儲存時間'];
-  const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-  const rows = records.map(r => [...FIELDS.map(k => r[k]), r.savedAt].map(q).join(','));
-  const blob = new Blob(['\uFEFF' + [head.map(q).join(','), ...rows].join('\n')], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = 'records.csv'; a.click();
-});
-
-$('#stripZ').checked = localStorage.getItem('stripZ') !== '0';
-$('#stripZ').addEventListener('change', () => localStorage.setItem('stripZ', $('#stripZ').checked ? '1' : '0'));
-
-document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
-  ['new', 'list', 'set'].forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
-  $('#title').textContent = { new: '表單擷取', list: '紀錄', set: '設定' }[b.dataset.tab];
-}));
-
-(function makeIcon() {
-  try {
-    const c = document.createElement('canvas'); c.width = c.height = 180;
-    const g = c.getContext('2d');
-    g.fillStyle = '#1f6feb'; g.fillRect(0, 0, 180, 180);
-    g.fillStyle = '#fff'; g.fillRect(48, 36, 84, 108);
-    g.fillStyle = '#1f6feb';
-    [62, 87, 112].forEach(y => g.fillRect(64, y, 52, 7));
-    $('#touchIcon').href = c.toDataURL('image/png');
-  } catch (e) {}
-})();
-
-renderList();
-</script>
-</body>
-</html>
+    const miss =
